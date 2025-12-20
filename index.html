@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D Particle Christmas Tree 🎄</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Arial', sans-serif; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        /* 摄像头预览 (调试用，实际可隐藏) */
+        #video-input { position: absolute; top: 10px; left: 10px; width: 160px; height: 120px; z-index: 2; border-radius: 8px; opacity: 0.7; transform: scaleX(-1); }
+        
+        /* 交互提示UI */
+        #ui-layer { position: absolute; bottom: 20px; width: 100%; text-align: center; color: gold; z-index: 3; pointer-events: none; text-shadow: 0 0 10px red; }
+        .gesture-icon { font-size: 24px; margin: 0 10px; opacity: 0.6; }
+        .active-gesture { opacity: 1; transform: scale(1.5); transition: 0.3s; }
+
+        /* 信纸弹窗 */
+        #letter-overlay {
+            display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 80%; max-width: 400px; background: url('https://www.transparenttextures.com/patterns/aged-paper.png'), #fff1c1;
+            padding: 30px; border-radius: 5px; box-shadow: 0 0 50px rgba(255, 215, 0, 0.5); z-index: 10;
+            text-align: center; color: #5a3e36; font-family: 'Brush Script MT', cursive;
+        }
+        #letter-content { font-size: 1.5em; border: none; background: transparent; width: 100%; resize: none; outline: none; text-align: center; }
+        .close-btn { margin-top: 15px; cursor: pointer; border: 1px solid #5a3e36; padding: 5px 15px; border-radius: 20px; }
+
+        /* 照片展示区 (简化版) */
+        #photo-overlay { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 9; }
+        #photo-img { max-width: 80vw; max-height: 80vh; border: 5px solid gold; box-shadow: 0 0 30px red; border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <video id="video-input" playsinline></video>
+
+    <div id="ui-layer">
+        <span id="g-fist" class="gesture-icon">✊ 聚合</span>
+        <span id="g-open" class="gesture-icon">✋ 散开</span>
+        <span id="g-point" class="gesture-icon">☝️ 信纸</span>
+        <span id="g-vict" class="gesture-icon">✌️ 祝福</span>
+        <span id="g-ok" class="gesture-icon">👌 照片</span>
+    </div>
+
+    <div id="letter-overlay">
+        <h2>To My Best Friend</h2>
+        <textarea id="letter-content" rows="4">Merry Christmas! 
+愿你的生活像这棵树一样闪闪发光！</textarea>
+        <div class="close-btn" onclick="toggleLetter(false)">Close</div>
+    </div>
+
+    <div id="photo-overlay">
+        <img id="photo-img" src="" alt="Christmas Memory">
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <script>
+    /**
+     * ============================================================
+     * 🎅 自定义配置区 (USER CONFIGURATION)
+     * 在这里修改颜色、音乐、图片和文字
+     * ============================================================
+     */
+    const CONFIG = {
+        particleCount: 15000,
+        colors: {
+            gold: 0xFFD700,
+            red: 0xFF0000,
+            green: 0x006400,
+            firework: [0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0xFF00FF]
+        },
+        musicUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', // 替换为你的mp3链接
+        photoUrls: [
+            'https://picsum.photos/400/400?random=1', // 替换照片链接1
+            'https://picsum.photos/400/400?random=2'  // 替换照片链接2
+        ],
+        textMessage: "MERRY\nCHRISTMAS" // 粒子组成的文字
+    };
+
+    /**
+     * ============================================================
+     * 🎄 核心逻辑区
+     * ============================================================
+     */
+    let scene, camera, renderer, particles, geometry;
+    let originalPositions = [], treePositions = [], spherePositions = [], textPositions = [];
+    let currentShape = 'tree'; 
+    let mouseX = 0;
+    
+    // 初始化 Three.js 环境
+    function initThree() {
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050505, 0.002);
+
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 2000);
+        camera.position.z = 1000;
+
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // 创建粒子系统
+        createParticles();
+        
+        // 添加环境光
+        const light = new THREE.PointLight(0xffffff, 1);
+        light.position.set(0, 500, 500);
+        scene.add(light);
+
+        // 音乐
+        const audioListener = new THREE.AudioListener();
+        camera.add(audioListener);
+        // 注意：浏览器通常需要用户交互(点击)才能播放声音
+        window.addEventListener('click', () => {
+            // 这里可以添加音频播放逻辑
+        });
+
+        animate();
+    }
+
+    // 创建粒子数据
+    function createParticles() {
+        geometry = new THREE.BufferGeometry();
+        const positions = [];
+        const colors = [];
+        const colorObj = new THREE.Color();
+
+        for (let i = 0; i < CONFIG.particleCount; i++) {
+            // 1. 初始位置 (随机)
+            const x = Math.random() * 2000 - 1000;
+            const y = Math.random() * 2000 - 1000;
+            const z = Math.random() * 2000 - 1000;
+            positions.push(x, y, z);
+            originalPositions.push(x, y, z);
+
+            // 2. 颜色分配 (金红为主，绿为辅)
+            const rand = Math.random();
+            if (rand > 0.6) colorObj.setHex(CONFIG.colors.gold);
+            else if (rand > 0.3) colorObj.setHex(CONFIG.colors.red);
+            else colorObj.setHex(CONFIG.colors.green);
+            colors.push(colorObj.r, colorObj.g, colorObj.b);
+
+            // 3. 计算形态目标位置
+            
+            // A. 圣诞树形态 (螺旋圆锥)
+            const angle = i * 0.1;
+            const radius = i * 0.05; // 底部变宽
+            const treeY = i * 0.1 - 500;
+            const treeX = Math.cos(angle) * radius * 4;
+            const treeZ = Math.sin(angle) * radius * 4;
+            treePositions.push(treeX, treeY, treeZ);
+
+            // B. 圆形云点 (球体)
+            const phi = Math.acos(-1 + (2 * i) / CONFIG.particleCount);
+            const theta = Math.sqrt(CONFIG.particleCount * Math.PI) * phi;
+            const sphereR = 600;
+            spherePositions.push(
+                sphereR * Math.cos(theta) * Math.sin(phi),
+                sphereR * Math.sin(theta) * Math.sin(phi),
+                sphereR * Math.cos(phi)
+            );
+
+            // C. 文字形态 (简化版：平面排列)
+            // 实际文字生成需要Canvas扫描像素，这里简化为排列成矩形阵列模拟"墙"
+            textPositions.push((i % 100) * 10 - 500, Math.floor(i / 100) * 10 - 300, 0);
+        }
+
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+        const material = new THREE.PointsMaterial({ 
+            size: 6, 
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            depthTest: false,
+            transparent: true
+        });
+
+        particles = new THREE.Points(geometry, material);
+        scene.add(particles);
+    }
+
+    // 变换形态
+    function transformTo(shapeType) {
+        if(currentShape === shapeType) return;
+        currentShape = shapeType;
+        
+        let target = [];
+        if (shapeType === 'tree') target = treePositions;
+        else if (shapeType === 'sphere') target = spherePositions;
+        else if (shapeType === 'text') target = textPositions;
+
+        // 使用 GSAP 动画过渡粒子位置
+        const positions = particles.geometry.attributes.position.array;
+        
+        // 这是一个简化的动画，实际应用中可能需要更复杂的Shader或逐点Tween
+        // 为了性能，我们这里模拟"飞向"目标
+        gsap.to(particles.rotation, { duration: 1, y: particles.rotation.y + Math.PI });
+        
+        // 简单的逐点插值演示 (注意：大量粒子逐个Tween会卡顿，这里仅做状态标记，
+        // 实际渲染循环中建议使用线性插值 lerp)
+        const dummyObj = { val: 0 };
+        const startPos = Float32Array.from(positions); // 拷贝当前位置
+        
+        gsap.to(dummyObj, {
+            val: 1,
+            duration: 2,
+            ease: "power2.inOut",
+            onUpdate: () => {
+                for(let i=0; i < CONFIG.particleCount; i++) {
+                    const idx = i * 3;
+                    positions[idx] = startPos[idx] + (target[idx] - startPos[idx]) * dummyObj.val;
+                    positions[idx+1] = startPos[idx+1] + (target[idx+1] - startPos[idx+1]) * dummyObj.val;
+                    positions[idx+2] = startPos[idx+2] + (target[idx+2] - startPos[idx+2]) * dummyObj.val;
+                }
+                particles.geometry.attributes.position.needsUpdate = true;
+            },
+            onComplete: () => {
+                 if(shapeType === 'text') launchFireworks();
+            }
+        });
+    }
+
+    // 烟花效果 (简单实现)
+    function launchFireworks() {
+        // 创建临时粒子爆炸效果
+        // 实际代码需增加专门的烟花类
+        console.log("Boom! Fireworks!");
+        document.body.style.backgroundColor = "#200";
+        setTimeout(() => document.body.style.backgroundColor = "#050505", 200);
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        
+        // 旋转逻辑
+        if (currentShape === 'tree') {
+            particles.rotation.y += 0.002;
+        } else if (currentShape === 'sphere') {
+            // 手势控制旋转
+            particles.rotation.y += mouseX * 0.01;
+        }
+
+        renderer.render(scene, camera);
+    }
+
+    /**
+     * ============================================================
+     * ✋ 手势识别逻辑 (MediaPipe)
+     * ============================================================
+     */
+    const videoElement = document.getElementById('video-input');
+    
+    function onResults(results) {
+        if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return;
+
+        const landmarks = results.multiHandLandmarks[0];
+        detectGesture(landmarks);
+    }
+
+    // 简单的手势判断算法
+    function detectGesture(landmarks) {
+        // 获取指尖和指根坐标
+        const thumbTip = landmarks[4];
+        const indexTip = landmarks[8];
+        const middleTip = landmarks[12];
+        const ringTip = landmarks[16];
+        const pinkyTip = landmarks[20];
+        const wrist = landmarks[0];
+
+        // 1. 判断手指是否伸直 (y坐标比关节高)
+        const isIndexOpen = indexTip.y < landmarks[6].y;
+        const isMiddleOpen = middleTip.y < landmarks[10].y;
+        const isRingOpen = ringTip.y < landmarks[14].y;
+        const isPinkyOpen = pinkyTip.y < landmarks[18].y;
+        const isThumbOpen = thumbTip.x < landmarks[2].x; // 简化判断
+
+        let gesture = "";
+
+        // ✊ Fist: 所有手指卷曲
+        if (!isIndexOpen && !isMiddleOpen && !isRingOpen && !isPinkyOpen) {
+            gesture = "FIST";
+            highlightIcon('g-fist');
+            transformTo('tree');
+            toggleLetter(false);
+            togglePhoto(false);
+        }
+        // ✋ Open Hand: 所有手指伸开
+        else if (isIndexOpen && isMiddleOpen && isRingOpen && isPinkyOpen) {
+            gesture = "OPEN";
+            highlightIcon('g-open');
+            transformTo('sphere');
+            // 计算手掌中心X坐标用于旋转
+            mouseX = (landmarks[9].x - 0.5) * 2; 
+        }
+        // ✌️ Victory: 食指中指伸开
+        else if (isIndexOpen && isMiddleOpen && !isRingOpen && !isPinkyOpen) {
+            gesture = "VICTORY";
+            highlightIcon('g-vict');
+            transformTo('text');
+        }
+        // ☝️ Point: 只有食指
+        else if (isIndexOpen && !isMiddleOpen && !isRingOpen && !isPinkyOpen) {
+            gesture = "POINT";
+            highlightIcon('g-point');
+            toggleLetter(true);
+        }
+        // 👌 OK: 拇指食指相触 (距离很近)
+        else {
+            const distance = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+            if (distance < 0.05 && isMiddleOpen) {
+                gesture = "OK";
+                highlightIcon('g-ok');
+                if(currentShape === 'sphere') togglePhoto(true);
+            }
+        }
+    }
+
+    function highlightIcon(id) {
+        document.querySelectorAll('.gesture-icon').forEach(el => el.classList.remove('active-gesture'));
+        document.getElementById(id).classList.add('active-gesture');
+    }
+
+    // UI 交互
+    function toggleLetter(show) {
+        document.getElementById('letter-overlay').style.display = show ? 'block' : 'none';
+    }
+
+    let photoIndex = 0;
+    function togglePhoto(show) {
+        const el = document.getElementById('photo-overlay');
+        if (show && el.style.display !== 'block') {
+            // 切换下一张
+            photoIndex = (photoIndex + 1) % CONFIG.photoUrls.length;
+            document.getElementById('photo-img').src = CONFIG.photoUrls[photoIndex];
+            el.style.display = 'block';
+        } else if (!show) {
+            el.style.display = 'none';
+        }
+    }
+
+    // 启动 MediaPipe
+    const hands = new Hands({locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }});
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7
+    });
+    hands.onResults(onResults);
+
+    const cameraUtils = new Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({image: videoElement});
+        },
+        width: 320,
+        height: 240
+    });
+    
+    // 初始化
+    initThree();
+    cameraUtils.start();
+
+    // 窗口自适应
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    </script>
+</body>
+</html>
