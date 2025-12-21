@@ -8,7 +8,7 @@
         body { margin: 0; overflow: hidden; background-color: #000000; font-family: 'Times New Roman', serif; }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
 
-        /* --- 新增：启动遮罩 (解决权限问题的关键) --- */
+        /* --- 启动遮罩 --- */
         #start-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: #000; z-index: 9999;
@@ -32,12 +32,16 @@
             align-items: center;
             padding-top: 40px;
             box-sizing: border-box;
-            opacity: 0; transition: opacity 1s; /* 初始隐藏 */
+            opacity: 0; transition: opacity 1s;
         }
         .ui-show { opacity: 1 !important; }
-        .ui-hidden { opacity: 0; pointer-events: none !important; }
 
-        /* Loading Spinner (集成在Start Overlay中) */
+        /* 🌟 关键修改：隐藏上传按钮区域，但保留DOM结构防止报错 */
+        .upload-container {
+            display: none !important; /* 强制隐藏 */
+        }
+
+        /* Loading Spinner */
         .loader-text {
             color: #d4af37; font-size: 14px; letter-spacing: 4px;
             text-transform: uppercase; font-weight: 100;
@@ -54,19 +58,6 @@
             opacity: 0.9;
         }
 
-        /* Buttons & Controls */
-        .upload-container {
-            display: flex; gap: 15px; margin-top: 20px; pointer-events: auto;
-            text-align: center; transition: opacity 0.5s ease;
-        }
-        .upload-btn {
-            background: rgba(20, 20, 20, 0.6);
-            border: 1px solid rgba(212, 175, 55, 0.4);
-            color: #d4af37; padding: 10px 25px; cursor: pointer;
-            text-transform: uppercase; letter-spacing: 3px; font-size: 10px;
-            transition: all 0.4s; display: inline-block; backdrop-filter: blur(5px);
-        }
-        .upload-btn:hover { background: #d4af37; color: #000; box-shadow: 0 0 20px rgba(212, 175, 55, 0.5); }
         .hint-text {
             color: rgba(212, 175, 55, 0.5); font-size: 9px; margin-top: 8px;
             letter-spacing: 1px; text-transform: uppercase;
@@ -167,25 +158,24 @@
     import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 
     // ==========================================
-    // ⚙️ 配置区域 (已修改为支持多图和网络资源)
+    // ⚙️ 【这里是你要修改图片的地方】
     // ==========================================
     const ASSETS = {
-        // 使用免费的圣诞音乐链接，确保无本地文件也能播放
+        // 背景音乐
         music: "https://assets.mixkit.co/music/preview/mixkit-christmas-magic-opening-2980.mp3", 
-        // 预设12张照片（使用Picsum随机图），你可以在这里替换为你的真实照片链接
+        
+        // 📸 照片列表：请在这里填入你的照片路径
+        // 如果你在github仓库里建了个叫 photos 的文件夹，路径就是 "./photos/文件名"
         images: [
+            // 下面这些是示例图，请替换成你自己的！
             "https://picsum.photos/400/600?random=1",
             "https://picsum.photos/400/600?random=2",
             "https://picsum.photos/400/600?random=3",
             "https://picsum.photos/400/600?random=4",
             "https://picsum.photos/400/600?random=5",
-            "https://picsum.photos/400/600?random=6",
-            "https://picsum.photos/400/600?random=7",
-            "https://picsum.photos/400/600?random=8",
-            "https://picsum.photos/400/600?random=9",
-            "https://picsum.photos/400/600?random=10",
-            "https://picsum.photos/400/600?random=11",
-            "https://picsum.photos/400/600?random=12"
+            // ... 你可以继续添加，用逗号隔开，比如：
+            // "./photos/myphoto1.jpg",
+            // "./photos/myphoto2.jpg"
         ]
     };
 
@@ -239,13 +229,12 @@
         createDust();
         createLetter();
 
+        // 🌟 这一行代码会自动加载上面 ASSETS.images 里填写的图片
         loadConfiguredImages();
 
         setupPostProcessing();
         setupEvents();
-        // initMusicPlayer() 和 initMediaPipe() 移至按钮点击事件中
 
-        // 绑定启动按钮事件（关键修改）
         const startBtn = document.getElementById('start-btn');
         const startOverlay = document.getElementById('start-overlay');
         const uiLayer = document.getElementById('ui-layer');
@@ -253,11 +242,8 @@
         startBtn.addEventListener('click', async () => {
             startBtn.innerText = "LOADING...";
             try {
-                // 用户交互后启动音乐和摄像头
                 initMusicPlayer();
                 await initMediaPipe();
-                
-                // 动画过渡
                 startOverlay.style.opacity = 0;
                 uiLayer.classList.add('ui-show');
                 setTimeout(() => startOverlay.remove(), 800);
