@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Christmas Gif By Y.ZHANG</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000000; font-family: 'Times New Roman', serif; }
+        body { margin: 0; overflow: hidden; background-color: #000000; font-family: 'Times New Roman', serif; user-select: none; } /* 禁止文字选中，优化拖拽体验 */
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
 
         /* --- 启动遮罩 --- */
@@ -115,9 +115,10 @@
         <div class="upload-wrapper"><input type="file" id="music-input" accept="audio/mp3"></div>
     </div>
     
-    <div class="hint-text">Gesture: '✊' for Tree | '🖐' for Boom | '☝️' for Letter | '✌️' for Fireworks | '👌' for Photo</div>
+    <div class="hint-text">Gesture: '🖐' for Boom | '✌️' for Fireworks | '☝️' for Letter | '👌' for Photo</div>
+    <div class="hint-text" style="margin-top: 5px; font-size: 8px;">Mouse: Double Click to Switch | Drag to Rotate | Right Click for Photo</div>
 </div>
-Tree
+
 <div id="webcam-wrapper">
     <video id="webcam" autoplay playsinline></video>
 </div>
@@ -169,10 +170,11 @@ Tree
     const STATE = {
         mode: 'TREE',
         focusTarget: null,
-        highlightedMesh: null, // 🌟 新增：当前高亮的照片
+        highlightedMesh: null,
         hand: { detected: false, x: 0, y: 0 },
         rotation: { x: 0, y: 0, targetX: 0, targetY: 0 },
-        music: { isPlaying: false, volume: 0.7, audioElement: null }
+        music: { isPlaying: false, volume: 0.7, audioElement: null },
+        isDragging: false // 🌟 新增：追踪鼠标拖拽状态
     };
 
     let scene, camera, renderer, composer;
@@ -487,18 +489,19 @@ Tree
             else if (mode === 'SCATTER' || mode === 'LETTER') { 
                 target = this.posScatter;
                 if(this.type === 'PHOTO') {
-                    // 🌟 修改：基础大小变为2.5倍
+                    // 🌟 修改：基础大小提升为2.5倍
                     targetScale = this.baseScale * 2.5; 
-                    // 🌟 修改：如果是高亮选中的照片，进一步放大
+                    
+                    // 🌟 修改：高亮状态逻辑
                     if (this.mesh === STATE.highlightedMesh) {
-                        targetScale = this.baseScale * 3.2; // 选中态更大
+                        targetScale = this.baseScale * 3.2; // 选中时再放大一点
                         // 边框发红光
                         if(this.mesh.children[0]) {
                             this.mesh.children[0].material.emissive.setHex(0xff0000); 
                             this.mesh.children[0].material.color.setHex(0xffaaaa);
                         }
                     } else {
-                        // 未选中恢复金边
+                        // 恢复金边
                         if(this.mesh.children[0]) {
                             this.mesh.children[0].material.emissive.setHex(0x000000); 
                             this.mesh.children[0].material.color.setHex(CONFIG.colors.champagneGold);
@@ -774,19 +777,79 @@ Tree
         } else { STATE.hand.detected = false; }
     }
 
+    // 🌟🌟🌟 新增：鼠标交互事件 🌟🌟🌟
     function setupEvents() {
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight); composer.setSize(window.innerWidth, window.innerHeight);
         });
         document.getElementById('file-input').addEventListener('change', handleImageUpload);
+
+        // 1. 鼠标拖拽旋转
+        let previousMousePosition = { x: 0, y: 0 };
+        
+        document.addEventListener('mousedown', (e) => {
+            if (e.button === 0) { // 左键
+                STATE.isDragging = true;
+                previousMousePosition = { x: e.clientX, y: e.clientY };
+            }
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (STATE.isDragging) {
+                const deltaMove = {
+                    x: e.clientX - previousMousePosition.x,
+                    y: e.clientY - previousMousePosition.y
+                };
+                // 旋转灵敏度
+                STATE.rotation.y += deltaMove.x * 0.005;
+                STATE.rotation.x += deltaMove.y * 0.005;
+                previousMousePosition = { x: e.clientX, y: e.clientY };
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            STATE.isDragging = false;
+        });
+
+        // 2. 双击切换模式
+        document.addEventListener('dblclick', () => {
+            const modes = ['TREE', 'SCATTER', 'LETTER', 'TEXT'];
+            const currentIndex = modes.indexOf(STATE.mode);
+            // 循环切换
+            let nextIndex = (currentIndex + 1) % modes.length;
+            if(currentIndex === -1) nextIndex = 0; // 如果当前是FOCUS等其他模式，重置为TREE
+            
+            STATE.mode = modes[nextIndex];
+            STATE.focusTarget = null;
+            STATE.highlightedMesh = null;
+        });
+
+        // 3. 右键打开/关闭照片
+        document.addEventListener('contextmenu', (e) => {
+            e.preventDefault(); // 阻止默认右键菜单
+            
+            if (STATE.mode === 'FOCUS') {
+                // 如果已打开，则关闭 (回到 SCATTER)
+                STATE.mode = 'SCATTER';
+                STATE.focusTarget = null;
+            } else {
+                // 如果未打开，则打开当前高亮照片 (或随机)
+                STATE.mode = 'FOCUS';
+                STATE.focusTarget = STATE.highlightedMesh;
+                if(!STATE.focusTarget) {
+                    const photos = particleSystem.filter(p => p.type === 'PHOTO');
+                    if(photos.length) STATE.focusTarget = photos[Math.floor(Math.random()*photos.length)].mesh;
+                }
+            }
+        });
     }
 
     function animate() {
         requestAnimationFrame(animate);
         const dt = clock.getDelta();
 
-        // 🌟 计算高亮照片逻辑 (仅在 Scatter 模式下)
+        // 🌟 核心修复：高亮计算逻辑 (Scatter 或 Tree 模式下)
         if (STATE.mode === 'SCATTER' || STATE.mode === 'TREE') {
             let minDist = Infinity;
             let closestMesh = null;
@@ -795,13 +858,17 @@ Tree
                     const worldPos = new THREE.Vector3();
                     p.mesh.getWorldPosition(worldPos);
                     const dist = worldPos.distanceTo(camera.position);
-                    if(dist < minDist) { minDist = dist; closestMesh = p.mesh; }
+                    // 只有距离够近且在视野前方的才算
+                    if(dist < minDist && dist < 60) { 
+                        minDist = dist; 
+                        closestMesh = p.mesh; 
+                    }
                 }
             });
             STATE.highlightedMesh = closestMesh;
         }
 
-        // 🌟 修复：允许 Tree 模式下进行手势旋转控制
+        // 手势旋转控制
         if (STATE.hand.detected) {
             if (STATE.mode === 'SCATTER' || STATE.mode === 'TEXT' || STATE.mode === 'LETTER' || STATE.mode === 'TREE') {
                 const targetRotY = STATE.hand.x * Math.PI * 0.9;
@@ -811,11 +878,16 @@ Tree
             }
         }
 
-        // 🌟 修复：只有当 TREE 模式且 *没有检测到手* 时才自动旋转，否则跟随手势
-        if(STATE.mode === 'TREE' && !STATE.hand.detected) {
-            mainGroup.rotation.y += 0.3 * dt;
+        // 🌟 旋转逻辑优先级：手势 > 鼠标拖拽 > 自动旋转
+        // 只有当 (TREE模式) 且 (无手势) 且 (无鼠标拖拽) 时才自动旋转
+        if(STATE.mode === 'TREE' && !STATE.hand.detected && !STATE.isDragging) {
+            mainGroup.rotation.y += 0.2 * dt;
             mainGroup.rotation.x = THREE.MathUtils.lerp(mainGroup.rotation.x, 0, dt);
+            // 同步自动旋转的角度到 STATE，防止下次拖拽跳变
+            STATE.rotation.y = mainGroup.rotation.y;
+            STATE.rotation.x = mainGroup.rotation.x;
         } else {
+             // 应用手势或鼠标控制的角度
              mainGroup.rotation.y = STATE.rotation.y;
              mainGroup.rotation.x = STATE.rotation.x;
         }
